@@ -65,7 +65,7 @@ Data have been collected from accelerometers placed on the belt, forearm, arm, a
 
 More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
 
-In this assigment, the objective is simply to use a training data partition to create model that can correctly predict the classification for a small test set of 20 observations, derived from the same original data set.  
+In this assigment, the objective is simply to use a training data partition to create a model that can correctly predict the classification for a small test set of 20 observations, derived from the same original data set.  
 
 The data are already separated into training and testing sets. The training set will be split further. 80% will be used to train the prediction models and 20% held back to estimate the out of sample error rate.
 
@@ -90,7 +90,7 @@ validation_set <- training[-training_ids,]
 
 The data set is structured in the form of a stream coming from the sensors worn by the participants. There are three date & time information variables which give time series information so the data can be analysed in time order.
 
-The team who have collected the data have divided it into time windows as labelled in the num\_window variable and the variable new\_window (levels: "No", "Yes""), where value "Yes" indicates a time window boundary.
+The team who have collected the data have divided it into time windows as labelled in the num\_window variable and the variable new\_window (levels: "No", "Yes"), where value "Yes" indicates a time window boundary.
 
 #### 2. Manual review of tabular data set
 Using very general R functions such as head, tail, summary and looking at ranges of numeric variables, levels and frequency of factor variables etc, the following observations have been made:
@@ -186,7 +186,7 @@ for (var in vars) {
 }
 ```
 
-Violin plots have been selected for this investigation as they are excellent for visualising variation between groups and there are 5 classifications in this data set. 
+Violin plots have been selected for this investigation as they are excellent for visualising variation between groups. 
 
 Alternative plot forms include:
 
@@ -578,4 +578,107 @@ Quadratic Linear Discrimiation was the poorest performer overall, with very poor
 
 For the purposes of this assignment, the most accurate model, rf\_set\_model, will be used for the final test submission. In a test of 20 samples, the chances of getting a single item incorrect are between `r 20 * (1 - accuracyConfInt("rf_set_model"))[2]` and `r 20 * (1 - accuracyConfInt("rf_set_model"))[1]`.
 
-### The test results are not shown here as the assignment is in the public domain on Github/Rpubs
+### Outcome
+
+The test results are assumed to be deducible using the num_window variable in the original data set as described in the first part of this report. 
+
+Based on this assumption, it is possible to comment on the final model performance.
+
+```{r generate_predictions}
+# Tests
+# Enact the EXACT same data cleaning and transformation steps.
+# Remove the unwanted columns
+testing_set <- cbind(rmUnwantedCols(testing)[, -53], classe = character(20))
+
+# Shift above zero, take the log and perform PCA
+# Using only parameters built from the training set
+testing_pca <- predict(myPreProc
+                          , myTransform(testing_set))
+
+preds <- gsub("model", "pred", models)
+marks <- gsub("model", "marks", models)
+
+for (p in 1:length(preds)) {
+  trans <- ifelse(grepl("pca", preds[p]), "pca", "set")
+  assign(preds[p], predict(get(models[p])
+                           , get(paste0("testing_", trans)))
+  )
+}
+
+answers <- data.frame(id = 1:20
+                  , answer = sapply(testing$num_window
+                    , function(nw) { 
+                        unique(training[training$num_window == nw
+                              , "classe"])
+                      }
+                    )
+                 , get(preds[1])
+                 , get(preds[2])
+                 , get(preds[3])
+                 , get(preds[4])
+                 , get(preds[5])
+                 , get(preds[6])
+                 )
+names(answers)[3:8] <- preds
+```
+
+```{r visualise_predictions}
+library(ggplot2)
+library(gridExtra)
+
+g <- ggplot(data = answers, aes(x = id)) +
+  geom_point(aes(y = answer)
+    , colour = myPal[1], size = 7, alpha = 0.5) + 
+  theme_bw() 
+
+shp <- 15
+sz <- 3
+clr <-myPal[5]
+
+gbm_pca_ans <- g + geom_point(aes(y = gbm_pca_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +
+  labs(list(title = models[1], x = "Problem Id", y = "Prediction"))
+
+gbm_set_ans <- g + geom_point(aes(y = gbm_set_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +  labs(list(title = models[2], x = "Problem Id", y = "Prediction"))
+
+qda_pca_ans <- g + geom_point(aes(y = qda_pca_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +
+  labs(list(title = models[3], x = "Problem Id", y = "Prediction"))
+
+qda_set_ans <- g + geom_point(aes(y = qda_set_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +  labs(list(title = models[4], x = "Problem Id", y = "Prediction"))
+
+rf_pca_ans <- g + geom_point(aes(y = rf_pca_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +  labs(list(title = models[5], x = "Problem Id", y = "Prediction"))
+
+rf_set_ans <- g + geom_point(aes(y = rf_set_pred)
+                              , shape = shp
+                              , colour = clr
+                              , size = sz) +  labs(list(title = models[6], x = "Problem Id", y = "Prediction"))
+
+grid.arrange(qda_set_ans
+             , qda_pca_ans
+             , gbm_set_ans
+             , gbm_pca_ans
+             , rf_set_ans
+             , rf_pca_ans)
+```
+
+*Red mark on green target denotes correct answer. Incorrect answer if mark missing target*  
+
+Both rf models have guessed all the answers correctly.  
+
+For the models that used the full set of predictors, gbm and (somewhat surprisingly) qda have predicted well with only a single error. The same point was misclassified so perhaps this is an ambiguous case. Certainly it is useful to know that these much simpler models can do very well, given that qda\_set\_model took only 11 seconds to train compared to the random forest 11 minutes on the same data.  
+
+The performance when using the PCA transformed data set was expected but disappointing. The trade off between data compression and model accuracy is clear from this demonstration.
