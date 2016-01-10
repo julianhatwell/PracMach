@@ -667,10 +667,10 @@ rf_set_ans <- g + geom_point(aes(y = rf_set_pred)
                               , colour = clr
                               , size = sz) +  labs(list(title = models[6], x = "Problem Id", y = "Prediction"))
 
-grid.arrange(qda_set_ans
-             , qda_pca_ans
-             , gbm_set_ans
+grid.arrange(gbm_set_ans
              , gbm_pca_ans
+             , qda_set_ans
+             , qda_pca_ans
              , rf_set_ans
              , rf_pca_ans)
 ```
