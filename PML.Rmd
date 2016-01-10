@@ -1,0 +1,546 @@
+```{r prologue, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE
+                      , message = FALSE
+                      , echo = FALSE
+                      #, cache = TRUE
+                      )
+
+knitr::opts_template$set(
+  fig.wide = list(fig.height = 4.5, fig.width = 8)
+  , fig.wideX = list(fig.height = 3, fig.width = 8)
+)
+
+library(knitr)
+library(caret)
+library(readr)
+library(lattice)
+library(parallel)
+library(doParallel)
+
+# This parameter is used to turn model building on or off
+build <- TRUE
+
+# the files are in my working directory
+# please download them from here if you want to follow the code chunks
+
+# training: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+# testing: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+training <- read_csv("pml-training.csv")
+testing <- read_csv("pml-testing.csv")
+
+# utility functions
+getColClasse <- function(df) {
+  which(names(df) == "classe")
+}
+# a nice colour palette
+myPal <- c("#8DD3C7", "#B0A8B3", "#9FB5D6", "#9EC0FA", "#EB8072")
+myPal.range <- colorRampPalette(c("#FFFFFF", c(myPal[3:1] )))
+```
+
+```{r start_parallel, eval=FALSE}
+# Some reference chunks
+p_clus <- makeCluster(detectCores())
+registerDoParallel(p_clus)
+```
+
+```{r stop_parallel, eval=FALSE}
+# Some reference chunks
+stopCluster(p_clus)
+```
+
+---
+title: "Machine Learning Assignment"
+author: "Julian Hatwell"
+date: `r format(Sys.time(), "%b %Y") `
+output: html_document
+---
+
+# Introduction
+*Paraphrased from the project brief*  
+
+Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (labelled "A" to "E" in the dataset).  
+
+More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+In this assigment, the objective is simply to use a training data partition to create model that can correctly predict the response variable "classe" for a small test set of 20 observations, derived from the same original data set.  
+
+The data are already separated into training and testing sets. The training set will be split further. 80% will be used to train the prediction models and 20% held back to estimate the out of sample error rate.
+
+```{r creating_training_validation_sets, echo=TRUE}
+# FOR BREVITY I'VE HIDDEN MOST OF THE UTILITY CODE IN THIS REPORT. 
+# YOU CAN CHECK THE RMD FILE IF INTERESTED.
+
+# I've already loaded the data into R.
+# This code will create two sets, split 80/20
+set.seed(23)
+training_ids <- createDataPartition(y = training$classe, p = 0.8, list = FALSE)
+
+training_set <- training[training_ids,]
+validation_set <- training[-training_ids,]
+```
+
+## Selecting & Creating Features
+
+### Step one: Exploratory Data Analysis:
+
+#### 1. Paper and background reading
+
+The data set is structured in the form of a stream coming from the sensors worn by the participants. There are three date & time information variables which give time series information so the data can be analysed in time order.
+
+The team who have collected the data have divided it into time windows as labelled in the num\_window variable and the variable new\_window (levels: "No", "Yes""), where value "Yes" indicates a time window boundary.
+
+#### 2. Manual review of tabular data set
+Using very general R functions such as head, tail, summary and looking at ranges of numeric variables, levels and frequency of factor variables etc, the following observations have been made:
+
+* Around 50-60 variables are continuously populated without missing values. 
+* Something in the region of 100 variables have been added to hold statistics for each time window.
+* These summary variables only hold data for rows where new_window = "Yes" (a tiny fraction)
+
+None of these additional summary variables are useful for the assignment and will be removed.
+
+* The timestamps and the num_window variable appear in the test set as well as the training set and presumably will predict the classe with 100% accuracy due to the chronological relationship to the training set.
+
+```{r time_series_plot, opts.label='fig.wideX'}
+xyplot(factor(training_set$classe)~training_ids
+      , col=myPal[factor(training_set$classe)]
+      , pch ="|", cex = 3
+      , main = list(
+        label = "Classifications appear in strict time order\nand will be too easy to predict"
+                    , cex = 0.8)
+      , xlab = "index"
+      , ylab = "classe (classification)")
+```
+
+In the spirit of the intention behind this assignment (i.e. to simulate a real world machine learning scenario), these variables are also removed from the training set.
+
+```{r remove_unnecessary_columns, echo=TRUE}
+# I'll write this as a function that "cleans" a data frame of all the unwanted columns.
+# This is so I can easily re-use the function on validation and test sets.
+rmUnwantedCols <- function(df) {
+  # lambda function determines which columns are sparsely populated
+  keepCols <- apply(df, 2, function(j) {sum(is.na(j) | j == "") == 0})
+  # add indices of other columns to drop (time, window and participant name)
+  keepCols[1:7] <- FALSE
+  return(df[,keepCols])
+}
+
+training_set <- rmUnwantedCols(training_set)
+# number of predictors now, reduced from 159
+dim(training_set)[2] - 1
+```
+
+#### 3. Perform some exploratory plots
+
+Presented here is the summary of the visual exploratory data analysis findings:
+
+```{r plot_setup}
+f_classe <- factor(training_set$classe)
+myScatterPlot <- function(j, df) {
+  xyplot(df[[j]]~I(1:nrow(df))
+                , groups = f_classe 
+                , col = myPal
+                , ylab = j
+                , xlab = "index"
+  )
+}
+
+myViolinPlot <- function(j, df) {
+  bwplot(df[[j]]~f_classe
+                , groups = f_classe
+                , col = myPal
+                , scales = list(y = list(tck = c(1, 0)))
+                , panel = panel.superpose
+                , panel.groups = panel.violin
+                , ylab = j)
+}
+
+layoutPlots_4 <- function(vars, plotFunc, df) {
+  print(plotFunc(vars[1], df), pos = c(0,0.5, 0.5, 1), more = TRUE)
+  print(plotFunc(vars[2], df), pos = c(0.5, 0.5, 1, 1), more = TRUE)
+  print(plotFunc(vars[3], df), pos = c(0, 0, 0.5, 0.5), more = TRUE)
+  print(plotFunc(vars[4], df), pos = c(0.5, 0, 1, 0.5))
+}
+```
+
+```{r common_plotting_params}
+df <- training_set
+vars <- names(df)[-getColClasse(df)]
+```
+
+```{r exploratory_scats_full, eval=FALSE}
+# This code chunk should be silent in the final version
+for (var in vars) {
+    s <- myScatterPlot(var, df)
+    print(s)
+}
+```
+
+```{r exploratory_violins_full, eval=FALSE}
+# This code chunk should be silent in the final version
+for (var in vars) {
+    v <- myViolinPlot(var, df)
+    print(v)
+}
+```
+
+Violin plots have been selected for this investigation as they are excellent for visualising variation between groups and there are 5 classifications in this data set. 
+
+Alternative plot forms include:
+
+  * boxplots with points overlaid
+    + these were found to be too busy given the size of the data set
+  * density plots
+    + again the visual clarity breaks down for more than 2-3 groups and there are 5 classifications in this data set 
+
+Below are just a few examples from the 50 or so possible predictors. 
+
+```{r exploratory_plots_examples, opts.label='fig.wide'}
+# Given the large number of potential predictors, there are a lot of plots of interest. 
+# For brevity only a couple of interesting examples are included. 
+# Code to setup the plot function and produce many more plots is in the Rmd file.
+exampleVars <- c("gyros_arm_x", "magnet_belt_y", "accel_forearm_x", "yaw_forearm")
+
+layoutPlots_4(exampleVars, myViolinPlot, training_set)
+```
+
+There are significant numbers of predictors that separate classe "A"  very well, e.g. "`r exampleVars[1]`" variable.
+
+Also many variables could be used to separate classe "E", e.g. "`r exampleVars[2]`"
+
+Classes "B", "C" and "D" have much more subtle difference on the whole. e.g. "`r exampleVars[3]`"
+
+And quite a number where there don't appear to be clear differences in the distributions, such as that shown in "`r exampleVars[4]`"
+
+### Step 2: Preprocessing & Dimension Reduction
+
+#### 1. Deal with problematic data
+```{r outlier_plot_setup, opts.label='fig.wide'}
+colClasse <- getColClasse(training_set)
+outlier <- which.min(training_set$gyros_dumbbell_x)
+outVars <- c("gyros_dumbbell_y", "gyros_dumbbell_x", "accel_dumbbell_z", "gyros_arm_y")
+myOutlierPlot <- function(j, df) {
+  xyplot(df[[j]]~I(1:nrow(df))
+                , groups = f_classe
+                , panel = function(x, y, col, ...) {
+                  panel.xyplot(x, y, col = myPal, ...)
+                  panel.points(outlier, y[outlier]
+                               , col = "black"
+                               , pch = 19)
+                }
+                , ylab = j
+                , xlab = "index")
+}
+```
+
+There appears to be one problematic observation that has the following characteristics:
+
+* It is a highly significant outlier in at least 5 of the predictors e.g. "`r outVars[1]`" & "`r outVars[3]`"
+* It is a member of an outlying cluster in a single predictor, "`r outVars[3]`"
+* It is unremarkable in the remaining predictors e.g. "`r outVars[4]`"
+
+This point may be a knock or a jolt or it may be a malfunction as it appears only the readings from the dumbbell sensor. It is obviously not part of the routine exercise, although there is no way to validate this.
+
+To correct this value, K Nearest Neighbours Imputation will be used, based on index position. This is appropriate given that the data originates as a time series and the nearest neighbours are by time order.
+
+This operation is expected to bring its value into the normal range where it is a solo outlier whilst leaving it in place where it is part of a cluster or where it is already normal.
+
+```{r outlier_removal, echo=TRUE, opts.label='fig.wide'}
+layoutPlots_4(outVars, myOutlierPlot, training_set)
+
+training_set[outlier, -colClasse] <- NA
+KNN <- 6 
+KNN_range <- (outlier-floor(KNN/2)):(outlier+floor(KNN/2))
+KNN_imputation <- apply(training_set[KNN_range,-colClasse]
+                        , 2
+                        , mean, na.rm = TRUE
+                        )
+training_set[outlier, -colClasse] <- KNN_imputation
+
+# replot the same 4 examples to see if it's worked - and it has
+layoutPlots_4(outVars, myOutlierPlot, training_set)
+```
+
+#### 2. Extract Features
+
+Creating good features depends to some extent on which prediction algorithm will be used. Model based approaches are sensitive to skewed or irregular distribution, which have been found in the data set.
+
+Other approaches that are less sensitive, such as random forests are very computationally intensive and will be slow to run for large numbers of predictors and large data sets.
+
+To improve model training performance in both areas (accuracy and time to train), an attempt is  made to transform the predictors and reduce their  number. 
+
+The method used for this is Principle Components Analysis (PCA) which captures most of the variation between the predictors into a smaller number of dimensions.
+
+```{r processing_setup}
+colClasse <- getColClasse(training_set)
+predictors <- training_set[,-colClasse]
+# use these common values for training, validation and final test
+minValues <- apply(predictors
+                    , 2
+                    , min)
+stDevs <- apply(predictors
+                    , 2
+                    , sd)
+
+myTransform <- function(df) {
+  # Add the abolute min value + 6 SE to each column
+  # Then take the log transform and return
+  
+  # I've benchmarked it and this for loop is faster
+  # than vector operations for the size of this dataset
+  for (j in names(predictors))
+    df[[j]] <- log(df[[j]] + 
+      abs(minValues[j]) + 
+      6 * stDevs[j])
+  return(df)
+}
+```
+
+```{r pca_processing, echo=TRUE}
+# I'VE HIDDEN SOME CODE FOR BREVITY. 
+# CHECK THE RMD FILE IF INTERESTED.
+
+# Step 1: shift all the predictor values above zero
+# Do this by adding the absolute value of the minimum plus 6 standard devs for each variable to minimise risk of new data containing a lower value. 
+# These values are kept for also appllying to the validation and test sets.
+# Step 2: log transform the results
+# Step 3: Perform the PCA transform (shown here)
+myPreProc <- preProcess(
+              myTransform(training_set)[,-colClasse]
+              , method = "pca"
+              , thresh = 0.8)
+training_pca <- predict(myPreProc
+                        , myTransform(training_set))
+# The number of predictor dimensions has been reduced to:                      
+dim(training_pca)[2] -1
+```
+
+```{r common_plotting_params_pca, eval=FALSE}
+# Interesting to see what these look like
+df <- training_pca
+vars <- names(df)[-getColClasse(df)]
+```
+
+```{r exploratory_scats_full, eval=FALSE}
+```
+
+```{r exploratory_violins_full, eval=FALSE}
+```
+
+## Selecting an algorithm
+The following steps were used to try to find a good model:
+
+1. Review PML lectures, internet search and book search (e.g. "Introduction to Statistical Learning with R").
+
+2. Pick algorithms and functions that are considered useful for a classification problem, and possibly this specific problem.
+
+3. Train selected algorithms on both the full set of predictors  and PCA transformed training data.
+
+The algorithms chosen are:  
+
+  * Quadratic Linear Discriminant Analysis (qda)
+    + This classifier is inherently multiclass, with no tuning parameters.
+  * Stochastic Gradient Boosting (gbm)
+    + It is hoped that this classifier can combine the large number of weak predictors and separate especially the more similar classes "B", "C" and "D".
+    + It should do better with the full set of predictors, prior to PCA transformation.
+  * Random Forest (rf)
+    + This algorithm highly regarded for accuracy but takes a long time to build.
+  
+## Cross Validation
+
+I have used information from [this link](http://machinelearningmastery.com/how-to-estimate-model-accuracy-in-r-using-the-caret-package/) as well as the PML lectures for this section on cross validation.
+
+Thanks to the caret package, it is not necessary manually to code up loops for k-fold cross validation in model building. The cross validation will be performed by the train function, using an appropriate trainControl setting.
+
+```{r common_training_params, echo=TRUE}
+# This trainControl object will be passed into the train function calls.
+# 5 fold cross validation will be performed on each model as it is being trained. 
+# 5 has been chosen because there are 4 cores on my processor. 4 will train while one is held back
+tc <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+```
+
+```{r get_or_train}
+get_or_train <- function(algo, trans) {
+  modelName <- paste(algo, trans, sep = "_")
+  modelFileName <- paste0("model_", modelName, ".RData")
+  
+  if (file.exists(modelFileName)) {
+    attach(modelFileName, warn.conflicts = FALSE)
+    } else {
+      dsName <- paste0("training_", trans)
+    assign(modelName, train(classe~., data = get(dsName), trControl = tc, method = algo))
+    model <- get(modelName)
+    save(model, file = modelFileName)
+    }
+  return(model)
+  }
+```
+
+```{r start_parallel}
+```
+```{r qda_model_building, echo=TRUE}
+# I HAVE HIDDEN SOME OF THE CODE FOR BREVITY. 
+# YOU CAN CHECK THE RMD FILE IF INTERESTED.
+
+# I have created a function to load from a saved file if one exists, or else train a new model and save it.
+# I don't want to use the knitr cache for this because
+# I also want to use the objects outside of the knitr environment and they take so long to build.
+
+qda_set_model <- get_or_train(algo = "qda", trans = "set")
+
+qda_pca_model <- get_or_train(algo = "qda", trans = "pca")
+```
+```{r stop_parallel}
+```
+
+```{r start_parallel, eval=build}
+```
+```{r gbm_model_building, eval=build}
+gbm_set_model <- get_or_train(algo = "gbm", trans = "set")
+
+gbm_pca_model <- get_or_train(algo = "gbm", trans = "pca")
+```
+```{r stop_parallel, eval=build}
+```
+
+```{r start_parallel, eval=build}
+```
+```{r rf_model_building, eval=build}
+rf_set_model <- get_or_train(algo = "rf", trans = "set")
+
+rf_pca_model <- get_or_train(algo = "rf", trans = "pca")
+```
+```{r stop_parallel, eval=build}
+```
+
+## Evaluation
+
+The out of sample error rates are evaluated with the validation set which was held back at the beginning of the assignment. First, it has to be run through the same transformations
+
+```{r transform_validation_set, echo=TRUE}
+# Enact the EXACT same data cleaning and transformation steps.
+# Remove the unwanted columns
+validation_set <- rmUnwantedCols(validation_set)
+
+# Shift above zero, take the log and perform PCA
+# Using only parameters built from the training set
+validation_pca <- predict(myPreProc
+                        , myTransform(validation_set))
+```
+
+```{r confusion_matrices}
+cm_qda_set <- confusionMatrix(
+  predict(qda_set_model, validation_set)
+  , validation_set$classe)
+
+cm_qda_pca <- confusionMatrix(
+  predict(qda_pca_model, validation_pca)
+  , validation_pca$classe)
+
+cm_gbm_set <- confusionMatrix(
+  predict(gbm_set_model, validation_set)
+  , validation_set$classe)
+
+cm_gbm_pca <- confusionMatrix(
+  predict(gbm_pca_model, validation_pca)
+  , validation_pca$classe)
+
+cm_rf_set <- confusionMatrix(
+  predict(rf_set_model, validation_set)
+  , validation_set$classe)
+
+cm_rf_pca <- confusionMatrix(
+  predict(rf_pca_model, validation_pca)
+  , validation_pca$classe)
+```
+
+The model accuracy and other in sample statistics are available in the model object and by creating a confusion matrix for each model's predictions against the reference variables:
+
+```{r evaluations, opts.label='fig.wide'}
+models <- c("gbm_pca_model"
+            , "gbm_set_model"
+            , "qda_pca_model"
+            , "qda_set_model"
+            , "rf_pca_model"
+            , "rf_set_model")
+results <- c("cm_gbm_pca"
+             , "cm_gbm_set"
+             , "cm_qda_pca"
+             , "cm_qda_set"
+             , "cm_rf_pca"
+             , "cm_rf_set")
+
+n <- length(models)
+
+buildTimes <- numeric(n)
+for (m in 1:n) {
+  buildTimes[m] <- get(models[m])$times$everything[3]
+}
+
+accuracy <- matrix(0, n, 3, dimnames = list(NULL, c("Accuracy", "Accuracy_Lower", "Accuracy_Upper")))
+for (r in 1:n) {
+  accuracy[r,] <- round(get(results[r])$overall[c(1, 3:4)], 4)
+}
+
+modelStats <- data.frame(model = models
+                         , buildTimes = buildTimes
+                         , accuracy
+                         , outOfSample_Error_Rate = 1 - accuracy[,1])
+
+kable(modelStats)
+
+xyplot(Accuracy~buildTimes
+       , data = modelStats
+       , panel = function(x,y) {
+         panel.xyplot(x, y
+              , pch = 19
+              , cex = 2
+              , col = "magenta")
+         panel.text(x + c(rep(90,4), rep(-80,2))
+                    , y
+                    , modelStats$model)
+       }
+       , main = list(label = "Model Performance and Training Times"
+                   , cex = 0.8)
+       , xlab = "Training Time (seconds)")
+```
+
+The random forest model on the full set of predictor variables is the most accurate. However, took over `r round(modelStats[modelStats$model == "rf_set_model", "buildTimes"]/60,0)` minutes to train. The process was parallelised over `r detectCores()` cores.
+
+The out of sample error rate for this model is predicted to be between `r 1 - modelStats[modelStats$model == "rf_set_model", 5]` and `r 1 - modelStats[modelStats$model == "rf_set_model", 4]`   
+
+Reducing the number of predictor variables with PCA reduced the accuracy by a very small amount to between `r 1 - modelStats[modelStats$model == "rf_pca_model", 5]` and `r 1 - modelStats[modelStats$model == "rf_pca_model", 4]`   , but cut the build time to under `r ceiling(modelStats[modelStats$model == "rf_pca_model", "buildTimes"]/60)` minutes. 
+
+As expected, Stochastic Gradient Boosting performed very will with between `r 1 - modelStats[modelStats$model == "gbm_set_model", 5]` and `r 1 - modelStats[modelStats$model == "gbm_set_model", 4]` accuracy when the full set of predictors were used but was much less useful on the PCA transformed set.
+
+Quadratic Linear Discrimiation was the poorest performer overall, with very poor results when using the PCA transformed set.
+
+For the purposes of this assignment, the most accurate model, rf\_set\_model, will be used for the final test submission but the time saving from reduction of predictor variables with PCA may be important in a real world scenario.
+
+```{r confusion_matrices_plots, opts.label='fig.wide'}
+confmats <- data.frame()
+for (t in 1:6) {
+  confmats <- rbind(confmats
+                    , cbind.data.frame(model = results[t]
+                            , get(results[t])$table)
+  )
+}
+
+levelplot(sqrt(Freq)~Prediction+Reference | model
+          , data = confmats
+          , shrink = c(0.25, 1)
+          , col.regions = myPal.range
+          , strip = strip.custom(bg = myPal[4])
+          , scales = list(x = list(alternating = c(1,0,1)
+                                   , tck = 1:0)
+                          , y = list(alternating = c(0,3))
+                          )
+          , main = list(label = "Levelplots of the confusion matrices"
+          , cex = 0.8)
+          , sub = list(label = expression(paste("Colour and size scaled for emphasis to ", sqrt("Frequency")))
+                       , cex = 0.75)
+)
+```
+
+### The test results are not shown here as the assignment is in the public domain on Github/Rpubs
