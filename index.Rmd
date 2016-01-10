@@ -35,7 +35,7 @@ getColClasse <- function(df) {
   which(names(df) == "classe")
 }
 # a nice colour palette
-myPal <- c("#8DD3C7", "#B0A8B3", "#9FB5D6", "#9EC0FA", "#EB8072")
+myPal <- c("#8DD3C7", "#B0A8B3", "#9FB5D6", "#9EC0FA", "#DB9082")
 myPal.range <- colorRampPalette(c("#FFFFFF", c(myPal[3:1] )))
 ```
 
@@ -60,13 +60,12 @@ output: html_document
 ---
 
 # Introduction
-*Paraphrased from the project brief*  
 
 Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (labelled "A" to "E" in the dataset).  
 
 More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
 
-In this assigment, the objective is simply to use a training data partition to create model that can correctly predict the response variable "classe" for a small test set of 20 observations, derived from the same original data set.  
+In this assigment, the objective is simply to use a training data partition to create model that can correctly predict the classification for a small test set of 20 observations, derived from the same original data set.  
 
 The data are already separated into training and testing sets. The training set will be split further. 80% will be used to train the prediction models and 20% held back to estimate the out of sample error rate.
 
@@ -105,13 +104,13 @@ None of these additional summary variables are useful for the assignment and wil
 * The timestamps and the num_window variable appear in the test set as well as the training set and presumably will predict the classe with 100% accuracy due to the chronological relationship to the training set.
 
 ```{r time_series_plot, opts.label='fig.wideX'}
-xyplot(factor(training_set$classe)~training_ids
+xyplot(factor(training_set$classe)~training_set$num_window
       , col=myPal[factor(training_set$classe)]
       , pch ="|", cex = 3
       , main = list(
         label = "Classifications appear in strict time order\nand will be too easy to predict"
                     , cex = 0.8)
-      , xlab = "index"
+      , xlab = "Time Series Window (num_window)"
       , ylab = "classe (classification)")
 ```
 
@@ -304,8 +303,9 @@ myTransform <- function(df) {
 # CHECK THE RMD FILE IF INTERESTED.
 
 # Step 1: shift all the predictor values above zero
-# Do this by adding the absolute value of the minimum plus 6 standard devs for each variable to minimise risk of new data containing a lower value. 
-# These values are kept for also appllying to the validation and test sets.
+# Do this by adding the absolute value of the minimum plus 6 standard devs for each variable.
+# This is to minimise risk of new data containing a lower value. 
+# These values are kept for also applying to the validation and test sets.
 # Step 2: log transform the results
 # Step 3: Perform the PCA transform (shown here)
 myPreProc <- preProcess(
@@ -389,8 +389,9 @@ get_or_train <- function(algo, trans) {
 # I don't want to use the knitr cache for this because
 # I also want to use the objects outside of the knitr environment and they take so long to build.
 
+# Algorithms qda, gbm and rf over both full set and pca transformed.
+# I am creating 6 models in total, just showing the first two below:
 qda_set_model <- get_or_train(algo = "qda", trans = "set")
-
 qda_pca_model <- get_or_train(algo = "qda", trans = "pca")
 ```
 ```{r stop_parallel}
@@ -416,9 +417,13 @@ rf_pca_model <- get_or_train(algo = "rf", trans = "pca")
 ```{r stop_parallel, eval=build}
 ```
 
-## Evaluation
+## Results & Evaluation
 
-The out of sample error rates are evaluated with the validation set which was held back at the beginning of the assignment. First, it has to be run through the same transformations
+Thanks to the caret package, the cross validation has been run during the model training and provides a good estimate of the likely out of sample error rate. This is returned in the \$results\$accuracy list item on the model object and can also be seen by printing the model summaries. For convenience these have been collected, tabulated (as cvAccuracy) and plotted below.
+
+A better estimate of out of sample error rate is evaluated with the validation set which was held back at the beginning of the assignment.  
+
+First, it has to be run through the same transformations then confusion matrices are produced to analyse each model's accuracy against the validation set.
 
 ```{r transform_validation_set, echo=TRUE}
 # Enact the EXACT same data cleaning and transformation steps.
@@ -457,9 +462,7 @@ cm_rf_pca <- confusionMatrix(
   , validation_pca$classe)
 ```
 
-The model accuracy and other in sample statistics are available in the model object and by creating a confusion matrix for each model's predictions against the reference variables:
-
-```{r evaluations, opts.label='fig.wide'}
+```{r evaluation_stats}
 models <- c("gbm_pca_model"
             , "gbm_set_model"
             , "qda_pca_model"
@@ -476,8 +479,10 @@ results <- c("cm_gbm_pca"
 n <- length(models)
 
 buildTimes <- numeric(n)
+cvAccuracy <- numeric(n)
 for (m in 1:n) {
   buildTimes[m] <- get(models[m])$times$everything[3]
+  cvAccuracy[m] <- round(max(get(models[m])$results$Accuracy),4)
 }
 
 accuracy <- matrix(0, n, 3, dimnames = list(NULL, c("Accuracy", "Accuracy_Lower", "Accuracy_Upper")))
@@ -487,38 +492,54 @@ for (r in 1:n) {
 
 modelStats <- data.frame(model = models
                          , buildTimes = buildTimes
+                         , cvAccuracy = cvAccuracy
                          , accuracy
+                         , inSample_Error_Rate = 1 - cvAccuracy
                          , outOfSample_Error_Rate = 1 - accuracy[,1])
 
-kable(modelStats)
+# a little utility function for the text
+row.names(accuracy) <- models
+accuracyConfInt <- function(m) { accuracy[m, 2:3] }
 
+# Tablulate the results
+kable(modelStats)
+```
+
+From the table it is clear that the cross validation has provided an estimate of out of sample error rate which is incredibly close to the estimate produced through prediction against the validations set.  
+
+In the future it may not be necessary to also split the data into a training and validation set as these techniques continue to improve.
+
+```{r evaluations, opts.label='fig.wide'}
 xyplot(Accuracy~buildTimes
        , data = modelStats
        , panel = function(x,y) {
+         panel.loess(x, y
+              , span = 1.5
+              , degree = 1
+              , lwd = 10
+              , col = myPal[1]
+              , alpha = 0.3)
          panel.xyplot(x, y
               , pch = 19
-              , cex = 2
-              , col = "magenta")
+              , col = myPal[5]
+              , cex = (1 + cvAccuracy) * cvAccuracy)
          panel.text(x + c(rep(90,4), rep(-80,2))
                     , y
                     , modelStats$model)
        }
-       , main = list(label = "Model Performance and Training Times"
+       , main = list(columns = 2, label = "Model Performance and Training Times"
                    , cex = 0.8)
-       , xlab = "Training Time (seconds)")
+       , xlab = "Training Time (seconds)"
+       , key = list(title = "Cross Validated Performance"
+                    , cex = 0.5
+                    , columns = 2
+                    , text = list(as.character(range(cvAccuracy)), cex = 0.5)
+                , points = list(pch = 19, col = myPal[5], cex = range((1 + cvAccuracy) * cvAccuracy))
+                )
+)
 ```
 
-The random forest model on the full set of predictor variables is the most accurate. However, took over `r round(modelStats[modelStats$model == "rf_set_model", "buildTimes"]/60,0)` minutes to train. The process was parallelised over `r detectCores()` cores.
-
-The out of sample error rate for this model is predicted to be between `r 1 - modelStats[modelStats$model == "rf_set_model", 5]` and `r 1 - modelStats[modelStats$model == "rf_set_model", 4]`   
-
-Reducing the number of predictor variables with PCA reduced the accuracy by a very small amount to between `r 1 - modelStats[modelStats$model == "rf_pca_model", 5]` and `r 1 - modelStats[modelStats$model == "rf_pca_model", 4]`   , but cut the build time to under `r ceiling(modelStats[modelStats$model == "rf_pca_model", "buildTimes"]/60)` minutes. 
-
-As expected, Stochastic Gradient Boosting performed very will with between `r 1 - modelStats[modelStats$model == "gbm_set_model", 5]` and `r 1 - modelStats[modelStats$model == "gbm_set_model", 4]` accuracy when the full set of predictors were used but was much less useful on the PCA transformed set.
-
-Quadratic Linear Discrimiation was the poorest performer overall, with very poor results when using the PCA transformed set.
-
-For the purposes of this assignment, the most accurate model, rf\_set\_model, will be used for the final test submission but the time saving from reduction of predictor variables with PCA may be important in a real world scenario.
+The graph shows how model accuracy increases with model complexity in a non-linear way. More and more computation cycles are required for diminishing returns. This is an important consideration for exploratory and non-critical applications.
 
 ```{r confusion_matrices_plots, opts.label='fig.wide'}
 confmats <- data.frame()
@@ -544,5 +565,17 @@ levelplot(sqrt(Freq)~Prediction+Reference | model
                        , cex = 0.75)
 )
 ```
+
+The random forest model on the full set of predictor variables is the most accurate. However, took over `r round(modelStats[modelStats$model == "rf_set_model", "buildTimes"]/60,0)` minutes to train. The process was parallelised over `r detectCores()` cores.
+
+The out of sample error rate for this model is predicted to be between `r 1 - accuracyConfInt("rf_set_model")[2]` and `r 1 -  accuracyConfInt("rf_set_model")[1]`   
+
+Reducing the number of predictor variables with PCA increased the error rate 10 fold (though it was initially very small) to between `r 1 - accuracyConfInt("rf_pca_model")[2]` and `r 1 -  accuracyConfInt("rf_pca_model")[1]`, but cut the build time to under `r ceiling(modelStats[modelStats$model == "rf_pca_model", "buildTimes"]/60)` minutes. 
+
+As expected, Stochastic Gradient Boosting performed very will with between `r 1 - accuracyConfInt("gbm_set_model")[2]` and `r 1 - accuracyConfInt("gbm_set_model")[1]` accuracy when the full set of predictors were used but was much less useful on the PCA transformed set.
+
+Quadratic Linear Discrimiation was the poorest performer overall, with very poor results when using the PCA transformed set, though it took a fraction of a second to build and could be useful for non-critical applications.
+
+For the purposes of this assignment, the most accurate model, rf\_set\_model, will be used for the final test submission. In a test of 20 samples, the chances of getting a single item incorrect are between `r 20 * (1 - accuracyConfInt("rf_set_model"))[2]` and `r 20 * (1 - accuracyConfInt("rf_set_model"))[1]`.
 
 ### The test results are not shown here as the assignment is in the public domain on Github/Rpubs
