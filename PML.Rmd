@@ -2,7 +2,7 @@
 knitr::opts_chunk$set(warning = FALSE
                       , message = FALSE
                       , echo = FALSE
-                      , cache = TRUE
+                      #, cache = TRUE
                       )
 
 knitr::opts_template$set(
@@ -36,7 +36,7 @@ getColClasse <- function(df) {
 }
 # a nice colour palette
 myPal <- c("#8DD3C7", "#B0A8B3", "#9FB5D6", "#9EC0FA", "#EB8072")
-myPal.range <- colorRampPalette(c("#FFFFFF", c(myPal[4:2] )))
+myPal.range <- colorRampPalette(c("#FFFFFF", c(myPal[3:1] )))
 ```
 
 ```{r start_parallel, eval=FALSE}
