@@ -1,8 +1,17 @@
 ```{r prologue, include=FALSE}
+library(knitr)
+library(stringr)
+library(readr)
+library(caret)
+library(lattice)
+library(ggplot2)
+library(gridExtra)
+library(parallel)
+library(doParallel)
+
 knitr::opts_chunk$set(warning = FALSE
                       , message = FALSE
                       , echo = FALSE
-                      #, cache = TRUE
                       )
 
 knitr::opts_template$set(
@@ -10,12 +19,9 @@ knitr::opts_template$set(
   , fig.wideX = list(fig.height = 3, fig.width = 8)
 )
 
-library(knitr)
-library(caret)
-library(readr)
-library(lattice)
-library(parallel)
-library(doParallel)
+
+
+
 
 # This parameter is used to turn model building on or off
 build <- TRUE
@@ -37,17 +43,6 @@ getColClasse <- function(df) {
 # a nice colour palette
 myPal <- c("#8DD3C7", "#B0A8B3", "#9FB5D6", "#9EC0FA", "#DB9082")
 myPal.range <- colorRampPalette(c("#FFFFFF", c(myPal[3:1] )))
-```
-
-```{r start_parallel, eval=FALSE}
-# Some reference chunks
-p_clus <- makeCluster(detectCores())
-registerDoParallel(p_clus)
-```
-
-```{r stop_parallel, eval=FALSE}
-# Some reference chunks
-stopCluster(p_clus)
 ```
 
 ---
@@ -169,7 +164,6 @@ layoutPlots_4 <- function(vars, plotFunc, df) {
 df <- training_set
 vars <- names(df)[-getColClasse(df)]
 ```
-
 ```{r exploratory_scats_full, eval=FALSE}
 # This code chunk should be silent in the final version
 for (var in vars) {
@@ -177,7 +171,6 @@ for (var in vars) {
     print(s)
 }
 ```
-
 ```{r exploratory_violins_full, eval=FALSE}
 # This code chunk should be silent in the final version
 for (var in vars) {
@@ -273,7 +266,7 @@ To improve model training performance in both areas (accuracy and time to train)
 
 The method used for this is Principle Components Analysis (PCA) which captures most of the variation between the predictors into a smaller number of dimensions.
 
-```{r processing_setup}
+```{r processing_setup, echo=TRUE}
 colClasse <- getColClasse(training_set)
 predictors <- training_set[,-colClasse]
 # use these common values for training, validation and final test
@@ -286,10 +279,10 @@ stDevs <- apply(predictors
 
 myTransform <- function(df) {
   # Add the abolute min value + 6 SE to each column
-  # Then take the log transform and return
+  # Then take the log and return
   
-  # I've benchmarked it and this for loop is faster
-  # than vector operations for the size of this dataset
+  # I've benchmarked it and this column-wise for loop is faster
+  # than vector-wise operations for the size of this dataset
   for (j in names(predictors))
     df[[j]] <- log(df[[j]] + 
       abs(minValues[j]) + 
@@ -299,15 +292,6 @@ myTransform <- function(df) {
 ```
 
 ```{r pca_processing, echo=TRUE}
-# I'VE HIDDEN SOME CODE FOR BREVITY. 
-# CHECK THE RMD FILE IF INTERESTED.
-
-# Step 1: shift all the predictor values above zero
-# Do this by adding the absolute value of the minimum plus 6 standard devs for each variable.
-# This is to minimise risk of new data containing a lower value. 
-# These values are kept for also applying to the validation and test sets.
-# Step 2: log transform the results
-# Step 3: Perform the PCA transform (shown here)
 myPreProc <- preProcess(
               myTransform(training_set)[,-colClasse]
               , method = "pca"
@@ -323,10 +307,8 @@ dim(training_pca)[2] -1
 df <- training_pca
 vars <- names(df)[-getColClasse(df)]
 ```
-
 ```{r exploratory_scats_full, eval=FALSE}
 ```
-
 ```{r exploratory_violins_full, eval=FALSE}
 ```
 
@@ -349,11 +331,9 @@ The algorithms chosen are:
   * Random Forest (rf)
     + This algorithm highly regarded for accuracy but takes a long time to build.
   
-## Cross Validation
+## Building Models with Cross Validation
 
-I have used information from [this link](http://machinelearningmastery.com/how-to-estimate-model-accuracy-in-r-using-the-caret-package/) as well as the PML lectures for this section on cross validation.
-
-Thanks to the caret package, it is not necessary manually to code up loops for k-fold cross validation in model building. The cross validation will be performed by the train function, using an appropriate trainControl setting.
+Thanks to the caret package, it is not necessary manually to code loops for k-fold cross validation in model building. The cross validation will be performed by the train function, using an appropriate trainControl setting.
 
 ```{r common_training_params, echo=TRUE}
 # This trainControl object will be passed into the train function calls.
@@ -362,8 +342,13 @@ Thanks to the caret package, it is not necessary manually to code up loops for k
 tc <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 ```
 
-```{r get_or_train}
+```{r get_or_train, echo=TRUE}
+# This function will load each model from a file if one exists.
+# Otherwise it will train a new model and save it.
+# I don't want to use the knitr cache for this because
+# I also want to use the objects outside of the knitr environment and they take so long to build.
 get_or_train <- function(algo, trans) {
+  
   modelName <- paste(algo, trans, sep = "_")
   modelFileName <- paste0("model_", modelName, ".RData")
   
@@ -371,50 +356,34 @@ get_or_train <- function(algo, trans) {
     attach(modelFileName, warn.conflicts = FALSE)
     } else {
       dsName <- paste0("training_", trans)
-    assign(modelName, train(classe~., data = get(dsName), trControl = tc, method = algo))
-    model <- get(modelName)
-    save(model, file = modelFileName)
+      
+      # set up parallel processing
+      p_clus <- makeCluster(detectCores())
+      registerDoParallel(p_clus)
+      
+      # build the model
+      assign(modelName, train(classe~., data = get(dsName),  trControl = tc, method = algo))
+      
+      # clean up and close parallel processing
+      stopCluster(p_clus)
+      
+      # naive cache
+      # save out to an external file for re-use
+      model <- get(modelName)
+      save(model, file = modelFileName)
     }
   return(model)
   }
 ```
 
-```{r start_parallel}
-```
-```{r qda_model_building, echo=TRUE}
-# I HAVE HIDDEN SOME OF THE CODE FOR BREVITY. 
-# YOU CAN CHECK THE RMD FILE IF INTERESTED.
-
-# I have created a function to load from a saved file if one exists, or else train a new model and save it.
-# I don't want to use the knitr cache for this because
-# I also want to use the objects outside of the knitr environment and they take so long to build.
-
+```{r model_building, echo=TRUE}
 # Algorithms qda, gbm and rf over both full set and pca transformed.
-# I am creating 6 models in total, just showing the first two below:
+gbm_set_model <- get_or_train(algo = "gbm", trans = "set")
+gbm_pca_model <- get_or_train(algo = "gbm", trans = "pca")
 qda_set_model <- get_or_train(algo = "qda", trans = "set")
 qda_pca_model <- get_or_train(algo = "qda", trans = "pca")
-```
-```{r stop_parallel}
-```
-
-```{r start_parallel, eval=build}
-```
-```{r gbm_model_building, eval=build}
-gbm_set_model <- get_or_train(algo = "gbm", trans = "set")
-
-gbm_pca_model <- get_or_train(algo = "gbm", trans = "pca")
-```
-```{r stop_parallel, eval=build}
-```
-
-```{r start_parallel, eval=build}
-```
-```{r rf_model_building, eval=build}
 rf_set_model <- get_or_train(algo = "rf", trans = "set")
-
 rf_pca_model <- get_or_train(algo = "rf", trans = "pca")
-```
-```{r stop_parallel, eval=build}
 ```
 
 ## Results & Evaluation
@@ -423,34 +392,35 @@ Thanks to the caret package, the cross validation has been run during the model 
 
 A better estimate of out of sample error rate is evaluated with the validation set which was held back at the beginning of the assignment.  
 
-First, it has to be run through the same transformations then confusion matrices are produced to analyse each model's accuracy against the validation set.
+First, it has to be run through the same transformations:
 
 ```{r transform_validation_set, echo=TRUE}
 # Enact the EXACT same data cleaning and transformation steps.
 # Remove the unwanted columns
 validation_set <- rmUnwantedCols(validation_set)
 
-# Shift above zero, take the log and perform PCA
-# Using only parameters built from the training set
+# Using parameters from the training set
+# namely, the min values, st devs and the PCA object
+# Shift above zero, take the log and perform PCA on the validation set
 validation_pca <- predict(myPreProc
                         , myTransform(validation_set))
 ```
 
-```{r confusion_matrices, echo=TRUE}
-cm_qda_set <- confusionMatrix(
-  predict(qda_set_model, validation_set)
-  , validation_set$classe)
-
-cm_qda_pca <- confusionMatrix(
-  predict(qda_pca_model, validation_pca)
-  , validation_pca$classe)
-
+```{r confusion_matrices}
 cm_gbm_set <- confusionMatrix(
   predict(gbm_set_model, validation_set)
   , validation_set$classe)
 
 cm_gbm_pca <- confusionMatrix(
   predict(gbm_pca_model, validation_pca)
+  , validation_pca$classe)
+
+cm_qda_set <- confusionMatrix(
+  predict(qda_set_model, validation_set)
+  , validation_set$classe)
+
+cm_qda_pca <- confusionMatrix(
+  predict(qda_pca_model, validation_pca)
   , validation_pca$classe)
 
 cm_rf_set <- confusionMatrix(
@@ -461,6 +431,8 @@ cm_rf_pca <- confusionMatrix(
   predict(rf_pca_model, validation_pca)
   , validation_pca$classe)
 ```
+
+Confusion matrices are produced using standard caret package functions (not shown, see Rmd file if required). The results are tabulated here for convenience:
 
 ```{r evaluation_stats}
 models <- c("gbm_pca_model"
@@ -509,7 +481,7 @@ From the table it is clear that the cross validation has provided an estimate of
 
 In the future it may not be necessary to also split the data into a training and validation set as machine learning algorithms continue to improve.
 
-```{r evaluations, opts.label='fig.wide'}
+```{r evaluation_plots, opts.label='fig.wide'}
 xyplot(Accuracy~buildTimes
        , data = modelStats
        , panel = function(x,y) {
@@ -523,7 +495,9 @@ xyplot(Accuracy~buildTimes
               , pch = 19
               , col = myPal[5]
               , cex = (1 + cvAccuracy) * cvAccuracy)
-         panel.text(x + c(rep(90,4), rep(-80,2))
+         panel.segments(x + c(rep(5,4), rep(-5,2)), y
+                        , (x + c(rep(80,4), rep(-70,2))/3), y)
+         panel.text(x + c(rep(70,4), rep(-60,2))
                     , y
                     , modelStats$model)
        }
@@ -534,7 +508,7 @@ xyplot(Accuracy~buildTimes
        , key = list(title = "Accuracy estimate from Cross Validation\n performed by the train function"
                     , cex = 0.5
                     , columns = 2
-                    , text = list(as.character(range(cvAccuracy)), cex = 0.5)
+                    , text = list(as.character(range(cvAccuracy)), cex = 0.75)
                 , points = list(pch = 19, col = myPal[5], cex = range((1 + cvAccuracy) * cvAccuracy))
                 )
 )
@@ -623,10 +597,7 @@ answers <- data.frame(id = 1:20
 names(answers)[3:8] <- preds
 ```
 
-```{r visualise_predictions}
-library(ggplot2)
-library(gridExtra)
-
+```{r_predictions_plots}
 g <- ggplot(data = answers, aes(x = id)) +
   geom_point(aes(y = answer)
     , colour = myPal[1], size = 7, alpha = 0.5) + 
@@ -676,7 +647,7 @@ grid.arrange(gbm_set_ans
              , rf_pca_ans)
 ```
 
-*Red mark on green target denotes correct answer. Incorrect answer if mark missing target*  
+*Red mark on green target denotes correct answer. Incorrect answer if mark misses green target*  
 
 Both rf models have guessed all the answers correctly.  
 
