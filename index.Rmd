@@ -19,13 +19,6 @@ knitr::opts_template$set(
   , fig.wideX = list(fig.height = 3, fig.width = 8)
 )
 
-
-
-
-
-# This parameter is used to turn model building on or off
-build <- TRUE
-
 # the files are in my working directory
 # please download them from here if you want to follow the code chunks
 
@@ -278,7 +271,7 @@ stDevs <- apply(predictors
                     , sd)
 
 myTransform <- function(df) {
-  # Add the abolute min value + 6 SE to each column
+  # Add the abolute min value + 6 * SD to each column
   # Then take the log and return
   
   # I've benchmarked it and this column-wise for loop is faster
