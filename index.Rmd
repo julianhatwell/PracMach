@@ -436,7 +436,7 @@ validation_pca <- predict(myPreProc
                         , myTransform(validation_set))
 ```
 
-```{r confusion_matrices}
+```{r confusion_matrices, echo=TRUE}
 cm_qda_set <- confusionMatrix(
   predict(qda_set_model, validation_set)
   , validation_set$classe)
@@ -507,7 +507,7 @@ kable(modelStats)
 
 From the table it is clear that the cross validation has provided an estimate of out of sample error rate which is incredibly close to the estimate produced through prediction against the validations set.  
 
-In the future it may not be necessary to also split the data into a training and validation set as these techniques continue to improve.
+In the future it may not be necessary to also split the data into a training and validation set as machine learning algorithms continue to improve.
 
 ```{r evaluations, opts.label='fig.wide'}
 xyplot(Accuracy~buildTimes
@@ -530,7 +530,8 @@ xyplot(Accuracy~buildTimes
        , main = list(columns = 2, label = "Model Performance and Training Times"
                    , cex = 0.8)
        , xlab = "Training Time (seconds)"
-       , key = list(title = "Cross Validated Performance"
+       , ylab = "Out of sample accuracy\nEstimated using validation set"
+       , key = list(title = "Accuracy estimate from Cross Validation\n performed by the train function"
                     , cex = 0.5
                     , columns = 2
                     , text = list(as.character(range(cvAccuracy)), cex = 0.5)
@@ -574,7 +575,7 @@ Reducing the number of predictor variables with PCA increased the error rate 10 
 
 As expected, Stochastic Gradient Boosting performed very will with between `r 1 - accuracyConfInt("gbm_set_model")[2]` and `r 1 - accuracyConfInt("gbm_set_model")[1]` accuracy when the full set of predictors were used but was much less useful on the PCA transformed set.
 
-Quadratic Linear Discrimiation was the poorest performer overall, with very poor results when using the PCA transformed set, though it took a fraction of a second to build and could be useful for non-critical applications.
+Quadratic Linear Discrimiation was the poorest performer overall, with by far the lowest accuracy when using the PCA transformed set. However, it took a fraction the time to build and could be useful for exploratory and non-critical applications especially where very large data sets are involved.
 
 For the purposes of this assignment, the most accurate model, rf\_set\_model, will be used for the final test submission. In a test of 20 samples, the chances of getting a single item incorrect are between `r 20 * (1 - accuracyConfInt("rf_set_model"))[2]` and `r 20 * (1 - accuracyConfInt("rf_set_model"))[1]`.
 
