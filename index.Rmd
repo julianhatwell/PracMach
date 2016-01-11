@@ -489,8 +489,8 @@ xyplot(Accuracy~buildTimes
               , col = myPal[5]
               , cex = (1 + cvAccuracy) * cvAccuracy)
          panel.segments(x + c(rep(5,4), rep(-5,2)), y
-                        , (x + c(rep(80,4), rep(-70,2))/3), y)
-         panel.text(x + c(rep(70,4), rep(-60,2))
+                        , (x + c(rep(60,4), rep(-60,2))/3), y)
+         panel.text(x + c(rep(90,4), rep(-80,2))
                     , y
                     , modelStats$model)
        }
