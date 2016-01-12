@@ -49,7 +49,7 @@ output: html_document
 
 # Introduction
 
-Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (labelled "A" to "E" in the dataset).  
+Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (variable "classe" with possible values "A" to "E" in the dataset).  
 
 More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
 
@@ -108,7 +108,7 @@ In the spirit of the intention behind this assignment (i.e. to simulate a real w
 # I'll write this as a function that "cleans" a data frame of all the unwanted columns.
 # This is so I can easily re-use the function on validation and test sets.
 rmUnwantedCols <- function(df) {
-  # lambda function determines which columns are sparsely populated
+  # determine which columns are sparsely populated
   keepCols <- apply(df, 2, function(j) {sum(is.na(j) | j == "") == 0})
   # add indices of other columns to drop (time, window and participant name)
   keepCols[1:7] <- FALSE
@@ -251,7 +251,7 @@ layoutPlots_4(outVars, myOutlierPlot, training_set)
 
 #### 2. Extract Features
 
-Creating good features depends to some extent on which prediction algorithm will be used. Model based approaches are sensitive to skewed or irregular distribution, which have been found in the data set.
+Creating good features depends to some extent on which prediction algorithm will be used. Model based approaches are sensitive to skewed or irregular distribution, which have been found in this data set.
 
 Other approaches that are less sensitive, such as random forests are very computationally intensive and will be slow to run for large numbers of predictors and large data sets.
 
@@ -262,20 +262,17 @@ The method used for this is Principle Components Analysis (PCA) which captures m
 ```{r processing_setup, echo=TRUE}
 colClasse <- getColClasse(training_set)
 predictors <- training_set[,-colClasse]
-# use these common values for training, validation and final test
-minValues <- apply(predictors
-                    , 2
-                    , min)
-stDevs <- apply(predictors
-                    , 2
-                    , sd)
+# Capture these common values to use on training, validation and final test sets
+minValues <- apply(predictors, 2, min)
+stDevs <- apply(predictors, 2, sd)
 
+# This function will shift each variable by addition. 
+# Instead of centering the means around zero,
+# the intention is to ensure that each variable
+# has its entire range greater than zero so I can then take the natural log.
+# Adding a little extra room (6 standard devs) for extreme outliers 
+# to ensure that I can process the validation and training sets with the same parameters
 myTransform <- function(df) {
-  # Add the abolute min value + 6 * SD to each column
-  # Then take the log and return
-  
-  # I've benchmarked it and this column-wise for loop is faster
-  # than vector-wise operations for the size of this dataset
   for (j in names(predictors))
     df[[j]] <- log(df[[j]] + 
       abs(minValues[j]) + 
@@ -289,8 +286,7 @@ myPreProc <- preProcess(
               myTransform(training_set)[,-colClasse]
               , method = "pca"
               , thresh = 0.8)
-training_pca <- predict(myPreProc
-                        , myTransform(training_set))
+training_pca <- predict(myPreProc, myTransform(training_set))
 # The number of predictor dimensions has been reduced to:                      
 dim(training_pca)[2] -1
 ```
@@ -319,7 +315,7 @@ The algorithms chosen are:
   * Quadratic Linear Discriminant Analysis (qda)
     + This classifier is inherently multiclass, with no tuning parameters.
   * Stochastic Gradient Boosting (gbm)
-    + It is hoped that this classifier can combine the large number of weak predictors and separate especially the more similar classes "B", "C" and "D".
+    + It is hoped that this classifier can combine a large number of weak predictors and separate especially the more similar classes "B", "C" and "D".
     + It should do better with the full set of predictors, prior to PCA transformation.
   * Random Forest (rf)
     + This algorithm highly regarded for accuracy but takes a long time to build.
@@ -357,7 +353,7 @@ get_or_train <- function(algo, trans) {
       # build the model
       assign(modelName, train(classe~., data = get(dsName),  trControl = tc, method = algo))
       
-      # clean up and close parallel processing
+      # close parallel processing
       stopCluster(p_clus)
       
       # naive cache
@@ -369,14 +365,33 @@ get_or_train <- function(algo, trans) {
   }
 ```
 
+```{r model_setup}
+# a matrix of names to use in for loops
+algorithms <- c("gbm", "qda", "rf")
+transforms <- c("pca", "set")
+models <- cbind(algo = rep(algorithms, each = 2),trans = transforms)
+models <- cbind(models
+                , model = paste(models[,1]
+                        , models[,2]
+                        ,"model", sep = "_")
+                )
+models <- cbind(models
+                , result = gsub("model", "cm", models[,3])
+                , pred = gsub("model", "pred", models[,3])
+                , mark = gsub("model", "mark", models[,3])
+                )
+```
+
 ```{r model_building, echo=TRUE}
 # Algorithms qda, gbm and rf over both full set and pca transformed.
-gbm_set_model <- get_or_train(algo = "gbm", trans = "set")
-gbm_pca_model <- get_or_train(algo = "gbm", trans = "pca")
-qda_set_model <- get_or_train(algo = "qda", trans = "set")
-qda_pca_model <- get_or_train(algo = "qda", trans = "pca")
-rf_set_model <- get_or_train(algo = "rf", trans = "set")
-rf_pca_model <- get_or_train(algo = "rf", trans = "pca")
+models[, c("model", "algo", "trans")]
+n <- nrow(models)
+for (m in 1:n) {
+  assign(models[m,"model"]
+         , get_or_train(algo = models[m,"algo"]
+                        , trans = models[m, "trans"])
+  )
+}
 ```
 
 ## Results & Evaluation
@@ -395,67 +410,34 @@ validation_set <- rmUnwantedCols(validation_set)
 # Using parameters from the training set
 # namely, the min values, st devs and the PCA object
 # Shift above zero, take the log and perform PCA on the validation set
-validation_pca <- predict(myPreProc
-                        , myTransform(validation_set))
+validation_pca <- predict(myPreProc, myTransform(validation_set))
 ```
 
 ```{r confusion_matrices}
-cm_gbm_set <- confusionMatrix(
-  predict(gbm_set_model, validation_set)
-  , validation_set$classe)
-
-cm_gbm_pca <- confusionMatrix(
-  predict(gbm_pca_model, validation_pca)
-  , validation_pca$classe)
-
-cm_qda_set <- confusionMatrix(
-  predict(qda_set_model, validation_set)
-  , validation_set$classe)
-
-cm_qda_pca <- confusionMatrix(
-  predict(qda_pca_model, validation_pca)
-  , validation_pca$classe)
-
-cm_rf_set <- confusionMatrix(
-  predict(rf_set_model, validation_set)
-  , validation_set$classe)
-
-cm_rf_pca <- confusionMatrix(
-  predict(rf_pca_model, validation_pca)
-  , validation_pca$classe)
-```
+for (m in 1:n) {
+  assign(models[m,"result"]
+         , confusionMatrix(predict(get(models[m, "model"])
+                                        , get(paste0("validation_", models[m,"trans"])))
+                                , validation_set$classe
+                                )
+         )
+}
+```  
 
 Confusion matrices are produced using standard caret package functions (not shown, see Rmd file if required). The results are tabulated here for convenience:
 
 ```{r evaluation_stats}
-models <- c("gbm_pca_model"
-            , "gbm_set_model"
-            , "qda_pca_model"
-            , "qda_set_model"
-            , "rf_pca_model"
-            , "rf_set_model")
-results <- c("cm_gbm_pca"
-             , "cm_gbm_set"
-             , "cm_qda_pca"
-             , "cm_qda_set"
-             , "cm_rf_pca"
-             , "cm_rf_set")
-
-n <- length(models)
-
 buildTimes <- numeric(n)
 cvAccuracy <- numeric(n)
-for (m in 1:n) {
-  buildTimes[m] <- get(models[m])$times$everything[3]
-  cvAccuracy[m] <- round(max(get(models[m])$results$Accuracy),4)
-}
-
 accuracy <- matrix(0, n, 3, dimnames = list(NULL, c("Accuracy", "Accuracy_Lower", "Accuracy_Upper")))
-for (r in 1:n) {
-  accuracy[r,] <- round(get(results[r])$overall[c(1, 3:4)], 4)
+
+for (m in 1:n) {
+  buildTimes[m] <- get(models[m, "model"])$times$everything[3]
+  cvAccuracy[m] <- round(max(get(models[m, "model"])$results$Accuracy),4)
+  accuracy[m,] <- round(get(models[m, "result"])$overall[c(1, 3:4)], 4)
 }
 
-modelStats <- data.frame(model = models
+modelStats <- data.frame(model = models[, "model"]
                          , buildTimes = buildTimes
                          , cvAccuracy = cvAccuracy
                          , accuracy
@@ -463,7 +445,7 @@ modelStats <- data.frame(model = models
                          , outOfSample_Error_Rate = 1 - accuracy[,1])
 
 # a little utility function for the text
-row.names(accuracy) <- models
+row.names(accuracy) <- models[,"model"]
 accuracyConfInt <- function(m) { accuracy[m, 2:3] }
 
 # Tablulate the results
@@ -471,8 +453,6 @@ kable(modelStats)
 ```
 
 From the table it is clear that the cross validation has provided an estimate of out of sample error rate which is incredibly close to the estimate produced through prediction against the validations set.  
-
-In the future it may not be necessary to also split the data into a training and validation set as machine learning algorithms continue to improve.
 
 ```{r evaluation_plots, opts.label='fig.wide'}
 xyplot(Accuracy~buildTimes
@@ -507,14 +487,14 @@ xyplot(Accuracy~buildTimes
 )
 ```
 
-The graph shows how model accuracy increases with model complexity in a non-linear way. More and more computation cycles are required for diminishing returns. This is an important consideration for exploratory and non-critical applications.
+The graph shows how model accuracy increases with model complexity in a non-linear way. More and more computation cycles are required for diminishing returns. This is an important consideration for exploratory and non-critical applications with large data sets.
 
 ```{r confusion_matrices_plots, opts.label='fig.wide'}
 confmats <- data.frame()
-for (t in 1:6) {
+for (m in 1:n) {
   confmats <- rbind(confmats
-                    , cbind.data.frame(model = results[t]
-                            , get(results[t])$table)
+                    , cbind.data.frame(model =  models[m, "result"]
+                                       ,  get(models[m, "result"])$table)
   )
 }
 
@@ -522,11 +502,15 @@ levelplot(sqrt(Freq)~Prediction+Reference | model
           , data = confmats
           , shrink = c(0.25, 1)
           , col.regions = myPal.range
-          , strip = strip.custom(bg = myPal[4])
+          , strip = strip.custom(bg = myPal[4]
+                                 , par.strip.text = list(cex = 0.8))
           , scales = list(x = list(alternating = c(1,0,1)
                                    , tck = 1:0)
                           , y = list(alternating = c(0,3))
                           )
+          , between = list(x = 0.2, y = 0.2)
+          , par.settings = list(axis.line = list(col = myPal[2]),
+                                strip.border = list(col = myPal[2]))
           , main = list(label = "Levelplots of the confusion matrices"
           , cex = 0.8)
           , sub = list(label = expression(paste("Colour and size scaled for emphasis to ", sqrt("Frequency")))
@@ -563,87 +547,46 @@ testing_set <- cbind(rmUnwantedCols(testing)[, -53], classe = character(20))
 testing_pca <- predict(myPreProc
                           , myTransform(testing_set))
 
-preds <- gsub("model", "pred", models)
-marks <- gsub("model", "marks", models)
-
-for (p in 1:length(preds)) {
-  trans <- ifelse(grepl("pca", preds[p]), "pca", "set")
-  assign(preds[p], predict(get(models[p])
+for (m in 1:n) {
+  trans <- ifelse(grepl("pca", models[m,"pred"]), "pca", "set")
+  assign(models[m,"pred"], predict(get(models[m,"model"])
                            , get(paste0("testing_", trans)))
   )
 }
 
-answers <- data.frame(id = 1:20
-                  , answer = sapply(testing$num_window
-                    , function(nw) { 
-                        unique(training[training$num_window == nw
-                              , "classe"])
-                      }
-                    )
-                 , get(preds[1])
-                 , get(preds[2])
-                 , get(preds[3])
-                 , get(preds[4])
-                 , get(preds[5])
-                 , get(preds[6])
-                 )
-names(answers)[3:8] <- preds
+answers <- data.frame()
+for (m in 1:n) {
+  answers <- rbind(answers, data.frame(id = 1:20
+                                , model = models[m,"model"]
+                                , prediction = get(models[m, "pred"])
+                                , reference = sapply(testing$num_window
+                                    , function(nw) { 
+                                      unique(training[training$num_window == nw
+                                          , "classe"])
+                                      }
+                                    )
+                                )
+                  )
+}
 ```
 
-```{r_predictions_plots}
+```{r_predictions_plots, opts.label='fig.wide'}
 g <- ggplot(data = answers, aes(x = id)) +
-  geom_point(aes(y = answer)
-    , colour = myPal[1], size = 7, alpha = 0.5) + 
-  theme_bw() 
+  geom_point(aes(y = reference)
+             , colour = myPal[1], size = 7, alpha = 0.5) +
+  geom_point(aes(y = prediction)
+             , colour = myPal[5], size = 3, shape = 15) +
+  facet_wrap(~ model, ncol = 2) + theme_bw() +
+  theme(strip.background = element_rect(fill=myPal[4])) + 
+  labs(list(x = "Problem Id", y = "Prediction"))
 
-shp <- 15
-sz <- 3
-clr <-myPal[5]
-
-gbm_pca_ans <- g + geom_point(aes(y = gbm_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +
-  labs(list(title = models[1], x = "Problem Id", y = "Prediction"))
-
-gbm_set_ans <- g + geom_point(aes(y = gbm_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[2], x = "Problem Id", y = "Prediction"))
-
-qda_pca_ans <- g + geom_point(aes(y = qda_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +
-  labs(list(title = models[3], x = "Problem Id", y = "Prediction"))
-
-qda_set_ans <- g + geom_point(aes(y = qda_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[4], x = "Problem Id", y = "Prediction"))
-
-rf_pca_ans <- g + geom_point(aes(y = rf_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[5], x = "Problem Id", y = "Prediction"))
-
-rf_set_ans <- g + geom_point(aes(y = rf_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[6], x = "Problem Id", y = "Prediction"))
-
-grid.arrange(gbm_set_ans
-             , gbm_pca_ans
-             , qda_set_ans
-             , qda_pca_ans
-             , rf_set_ans
-             , rf_pca_ans)
+g
 ```
 
-*Red mark on green target denotes correct answer. Incorrect answer if mark misses green target*  
+*Red mark on green target denotes correct answer predicted. Incorrect answer predicted if mark misses green target*  
 
 Both rf models have guessed all the answers correctly.  
 
 For the models that used the full set of predictors, gbm and (somewhat surprisingly) qda have predicted well with only a single error. The same point was misclassified so perhaps this is an ambiguous case. Certainly it is useful to know that these much simpler models can do very well, given that qda\_set\_model took only 11 seconds to train compared to the random forest 11 minutes on the same data.  
 
-The performance when using the PCA transformed data set was expected but disappointing. The trade off between data compression and model accuracy is clear from this demonstration.
+The lower performance when using the PCA transformed data set was perhaps expected. The trade off between data compression and model accuracy is clear from this demonstration.
