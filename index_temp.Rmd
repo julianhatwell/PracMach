@@ -49,7 +49,7 @@ output: html_document
 
 # Introduction
 
-Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (labelled "A" to "E" in the dataset).  
+Data have been collected from accelerometers placed on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform dumbbell lifts correctly and incorrectly in 4 different ways, giving a total of 5 classifications (variable "classe" with possible values "A" to "E" in the dataset).  
 
 More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
 
@@ -108,7 +108,7 @@ In the spirit of the intention behind this assignment (i.e. to simulate a real w
 # I'll write this as a function that "cleans" a data frame of all the unwanted columns.
 # This is so I can easily re-use the function on validation and test sets.
 rmUnwantedCols <- function(df) {
-  # lambda function determines which columns are sparsely populated
+  # determine which columns are sparsely populated
   keepCols <- apply(df, 2, function(j) {sum(is.na(j) | j == "") == 0})
   # add indices of other columns to drop (time, window and participant name)
   keepCols[1:7] <- FALSE
@@ -262,25 +262,17 @@ The method used for this is Principle Components Analysis (PCA) which captures m
 ```{r processing_setup, echo=TRUE}
 colClasse <- getColClasse(training_set)
 predictors <- training_set[,-colClasse]
-# use these common values for training, validation and final test
-minValues <- apply(predictors
-                    , 2
-                    , min)
-stDevs <- apply(predictors
-                    , 2
-                    , sd)
+# Capture these common values to use on training, validation and final test sets
+minValues <- apply(predictors, 2, min)
+stDevs <- apply(predictors, 2, sd)
 
-# This will shift each variable by addition 
-# Instead of centering the means around zero
-# The intention is to ensure that its entire range is above zero and then take the natural log
-# Adding a little extra room for extreme outliers 
-# To ensure that I can process the validation and training sets with the same parameters
+# This function will shift each variable by addition. 
+# Instead of centering the means around zero,
+# the intention is to ensure that each variable
+# has its entire range greater than zero so I can then take the natural log.
+# Adding a little extra room (6 standard devs) for extreme outliers 
+# to ensure that I can process the validation and training sets with the same parameters
 myTransform <- function(df) {
-  # Add the abolute min value + 6 * SD to each column
-  # Then take the log and return
-  
-  # I've benchmarked it and this column-wise for loop is faster
-  # than vector-wise operations for the size of this dataset
   for (j in names(predictors))
     df[[j]] <- log(df[[j]] + 
       abs(minValues[j]) + 
@@ -294,8 +286,7 @@ myPreProc <- preProcess(
               myTransform(training_set)[,-colClasse]
               , method = "pca"
               , thresh = 0.8)
-training_pca <- predict(myPreProc
-                        , myTransform(training_set))
+training_pca <- predict(myPreProc, myTransform(training_set))
 # The number of predictor dimensions has been reduced to:                      
 dim(training_pca)[2] -1
 ```
@@ -324,7 +315,7 @@ The algorithms chosen are:
   * Quadratic Linear Discriminant Analysis (qda)
     + This classifier is inherently multiclass, with no tuning parameters.
   * Stochastic Gradient Boosting (gbm)
-    + It is hoped that this classifier can combine the large number of weak predictors and separate especially the more similar classes "B", "C" and "D".
+    + It is hoped that this classifier can combine a large number of weak predictors and separate especially the more similar classes "B", "C" and "D".
     + It should do better with the full set of predictors, prior to PCA transformation.
   * Random Forest (rf)
     + This algorithm highly regarded for accuracy but takes a long time to build.
@@ -362,7 +353,7 @@ get_or_train <- function(algo, trans) {
       # build the model
       assign(modelName, train(classe~., data = get(dsName),  trControl = tc, method = algo))
       
-      # clean up and close parallel processing
+      # close parallel processing
       stopCluster(p_clus)
       
       # naive cache
@@ -419,8 +410,7 @@ validation_set <- rmUnwantedCols(validation_set)
 # Using parameters from the training set
 # namely, the min values, st devs and the PCA object
 # Shift above zero, take the log and perform PCA on the validation set
-validation_pca <- predict(myPreProc
-                        , myTransform(validation_set))
+validation_pca <- predict(myPreProc, myTransform(validation_set))
 ```
 
 ```{r confusion_matrices}
@@ -464,8 +454,6 @@ kable(modelStats)
 
 From the table it is clear that the cross validation has provided an estimate of out of sample error rate which is incredibly close to the estimate produced through prediction against the validations set.  
 
-In the future it may not be necessary to also split the data into a training and validation set as machine learning algorithms continue to improve.
-
 ```{r evaluation_plots, opts.label='fig.wide'}
 xyplot(Accuracy~buildTimes
        , data = modelStats
@@ -499,7 +487,7 @@ xyplot(Accuracy~buildTimes
 )
 ```
 
-The graph shows how model accuracy increases with model complexity in a non-linear way. More and more computation cycles are required for diminishing returns. This is an important consideration for exploratory and non-critical applications.
+The graph shows how model accuracy increases with model complexity in a non-linear way. More and more computation cycles are required for diminishing returns. This is an important consideration for exploratory and non-critical applications with large data sets.
 
 ```{r confusion_matrices_plots, opts.label='fig.wide'}
 confmats <- data.frame()
@@ -514,11 +502,15 @@ levelplot(sqrt(Freq)~Prediction+Reference | model
           , data = confmats
           , shrink = c(0.25, 1)
           , col.regions = myPal.range
-          , strip = strip.custom(bg = myPal[4])
+          , strip = strip.custom(bg = myPal[4]
+                                 , par.strip.text = list(cex = 0.8))
           , scales = list(x = list(alternating = c(1,0,1)
                                    , tck = 1:0)
                           , y = list(alternating = c(0,3))
                           )
+          , between = list(x = 0.2, y = 0.2)
+          , par.settings = list(axis.line = list(col = myPal[2]),
+                                strip.border = list(col = myPal[2]))
           , main = list(label = "Levelplots of the confusion matrices"
           , cex = 0.8)
           , sub = list(label = expression(paste("Colour and size scaled for emphasis to ", sqrt("Frequency")))
