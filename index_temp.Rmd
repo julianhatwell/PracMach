@@ -375,6 +375,7 @@ get_or_train <- function(algo, trans) {
 ```
 
 ```{r model_setup}
+# a matrix of names to use in for loops
 algorithms <- c("gbm", "qda", "rf")
 transforms <- c("pca", "set")
 models <- cbind(algo = rep(algorithms, each = 2),trans = transforms)
@@ -382,9 +383,12 @@ models <- cbind(models
                 , model = paste(models[,1]
                         , models[,2]
                         ,"model", sep = "_")
-                , result = paste(models[,1]
-                        , models[,2]
-                        ,"cm", sep = "_"))
+                )
+models <- cbind(models
+                , result = gsub("model", "cm", models[,3])
+                , pred = gsub("model", "pred", models[,3])
+                , mark = gsub("model", "mark", models[,3])
+                )
 ```
 
 ```{r model_building, echo=TRUE}
@@ -551,81 +555,40 @@ testing_set <- cbind(rmUnwantedCols(testing)[, -53], classe = character(20))
 testing_pca <- predict(myPreProc
                           , myTransform(testing_set))
 
-preds <- gsub("model", "pred", models)
-marks <- gsub("model", "marks", models)
-
-for (p in 1:length(preds)) {
-  trans <- ifelse(grepl("pca", preds[p]), "pca", "set")
-  assign(preds[p], predict(get(models[p])
+for (m in 1:n) {
+  trans <- ifelse(grepl("pca", models[m,"pred"]), "pca", "set")
+  assign(models[m,"pred"], predict(get(models[m,"model"])
                            , get(paste0("testing_", trans)))
   )
 }
 
-answers <- data.frame(id = 1:20
-                  , answer = sapply(testing$num_window
-                    , function(nw) { 
-                        unique(training[training$num_window == nw
-                              , "classe"])
-                      }
-                    )
-                 , get(preds[1])
-                 , get(preds[2])
-                 , get(preds[3])
-                 , get(preds[4])
-                 , get(preds[5])
-                 , get(preds[6])
-                 )
-names(answers)[3:8] <- preds
+answers <- data.frame()
+for (m in 1:n) {
+  answers <- rbind(answers, data.frame(id = 1:20
+                                , model = models[m,"model"]
+                                , prediction = get(models[m, "pred"])
+                                , reference = sapply(testing$num_window
+                                    , function(nw) { 
+                                      unique(training[training$num_window == nw
+                                          , "classe"])
+                                      }
+                                    )
+                                )
+                  )
+}
 ```
 
-```{r_predictions_plots}
+```{r_predictions_plots, opts.label='fig.wide'}
 g <- ggplot(data = answers, aes(x = id)) +
-  geom_point(aes(y = answer)
-    , colour = myPal[1], size = 7, alpha = 0.5) + 
-  theme_bw() 
+  geom_point(aes(y = reference)
+             , colour = myPal[1], size = 7, alpha = 0.5) +
+  geom_point(aes(y = prediction)
+             , colour = myPal[5], size = 3, shape = 15) +
+  facet_wrap(~ model, ncol = 2) + theme_bw() +
+  theme(strip.background = element_rect(fill=myPal[4])) + 
+  labs(list(x = "Problem Id", y = "Prediction"))
 
-shp <- 15
-sz <- 3
-clr <-myPal[5]
-
-gbm_pca_ans <- g + geom_point(aes(y = gbm_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +
-  labs(list(title = models[1], x = "Problem Id", y = "Prediction"))
-
-gbm_set_ans <- g + geom_point(aes(y = gbm_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[2], x = "Problem Id", y = "Prediction"))
-
-qda_pca_ans <- g + geom_point(aes(y = qda_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +
-  labs(list(title = models[3], x = "Problem Id", y = "Prediction"))
-
-qda_set_ans <- g + geom_point(aes(y = qda_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[4], x = "Problem Id", y = "Prediction"))
-
-rf_pca_ans <- g + geom_point(aes(y = rf_pca_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[5], x = "Problem Id", y = "Prediction"))
-
-rf_set_ans <- g + geom_point(aes(y = rf_set_pred)
-                              , shape = shp
-                              , colour = clr
-                              , size = sz) +  labs(list(title = models[6], x = "Problem Id", y = "Prediction"))
-
-grid.arrange(gbm_set_ans
-             , gbm_pca_ans
-             , qda_set_ans
-             , qda_pca_ans
-             , rf_set_ans
-             , rf_pca_ans)
+g
 ```
 
 *Red mark on green target denotes correct answer. Incorrect answer if mark misses green target*  
@@ -634,4 +597,4 @@ Both rf models have guessed all the answers correctly.
 
 For the models that used the full set of predictors, gbm and (somewhat surprisingly) qda have predicted well with only a single error. The same point was misclassified so perhaps this is an ambiguous case. Certainly it is useful to know that these much simpler models can do very well, given that qda\_set\_model took only 11 seconds to train compared to the random forest 11 minutes on the same data.  
 
-The performance when using the PCA transformed data set was expected but disappointing. The trade off between data compression and model accuracy is clear from this demonstration.
+The lower performance when using the PCA transformed data set was perhaps expected. The trade off between data compression and model accuracy is clear from this demonstration.
