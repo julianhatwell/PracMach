@@ -331,6 +331,8 @@ Thanks to the caret package, it is not necessary manually to code loops for k-fo
 tc <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 ```
 
+In addition to this, the random forest algorithm is designed to carry out repeated cross validation as part of the generation process. It is not actually necessary to do a separate validation on a model built with random forest. However, for the purpose of consistency (and code automation) this has been carried out for all three selected algorithms.
+
 ```{r get_or_train, echo=TRUE}
 # This function will load each model from a file if one exists.
 # Otherwise it will train a new model and save it.
@@ -396,7 +398,7 @@ for (m in 1:n) {
 
 ## Results & Evaluation
 
-Thanks to the caret package, the cross validation has been run during the model training and provides a good estimate of the likely out of sample error rate. This is returned in the \$results\$accuracy list item on the model object and can also be seen by printing the model summaries. For convenience these have been collected, tabulated (as cvAccuracy) and plotted below.
+Thanks to the caret package, the cross validation has been run during the model training and provides a good estimate of the likely out of sample error rate. This is returned in the \$results\$accuracy list item on the model object and can also be seen by printing the model summaries (not shown here). For convenience these have been collected, tabulated (as cvAccuracy) and plotted below.
 
 A better estimate of out of sample error rate is evaluated with the validation set which was held back at the beginning of the assignment.  
 
