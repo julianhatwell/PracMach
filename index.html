@@ -234,6 +234,7 @@ dim(training_pca)[2] -1</code></pre>
 # 5 fold cross validation will be performed on each model as it is being trained. 
 # 5 has been chosen because there are 4 cores on my processor. 4 will train while one is held back
 tc &lt;- trainControl(method = &quot;cv&quot;, number = 5, allowParallel = TRUE)</code></pre>
+<p>In addition to this, the random forest algorithm is designed to carry out repeated cross validation as part of the generation process. It is not actually necessary to do a separate validation on a model built with random forest. However, for the purpose of consistency (and code automation) this has been carried out for all three selected algorithms.</p>
 <pre class="r"><code># This function will load each model from a file if one exists.
 # Otherwise it will train a new model and save it.
 # I don't want to use the knitr cache for this because

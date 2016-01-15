@@ -398,7 +398,7 @@ for (m in 1:n) {
 
 ## Results & Evaluation
 
-Thanks to the caret package, the cross validation has been run during the model training and provides a good estimate of the likely out of sample error rate. This is returned in the \$results\$accuracy list item on the model object and can also be seen by printing the model summaries (not shown here). For convenience these have been collected, tabulated (as cvAccuracy) and plotted below.
+Thanks to the caret package, the cross validation has been run during the model training and provides a good estimate of the likely out of sample error rate. This is returned in the \$results\$accuracy list item on the model object and can also be seen by printing the model summaries. For convenience these have been collected, tabulated (as cvAccuracy) and plotted below.
 
 A better estimate of out of sample error rate is evaluated with the validation set which was held back at the beginning of the assignment.  
 
