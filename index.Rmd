@@ -524,7 +524,7 @@ The out of sample error rate for this model is predicted to be between `r 1 - ac
 
 Reducing the number of predictor variables with PCA increased the error rate 10 fold (though it was initially very small) to between `r 1 - accuracyConfInt("rf_pca_model")[2]` and `r 1 -  accuracyConfInt("rf_pca_model")[1]`, but cut the build time to under `r ceiling(modelStats[modelStats$model == "rf_pca_model", "buildTimes"]/60)` minutes. 
 
-As expected, Stochastic Gradient Boosting performed very will with between `r 1 - accuracyConfInt("gbm_set_model")[2]` and `r 1 - accuracyConfInt("gbm_set_model")[1]` accuracy when the full set of predictors were used but was much less useful on the PCA transformed set.
+As expected, Stochastic Gradient Boosting performed very will with between `r 1 - accuracyConfInt("gbm_set_model")[2]` and `r 1 - accuracyConfInt("gbm_set_model")[1]` out of sample error rate when the full set of predictors were used but was much less useful on the PCA transformed set.
 
 Quadratic Linear Discrimiation was the poorest performer overall, with by far the lowest accuracy when using the PCA transformed set. However, it took a fraction the time to build and could be useful for exploratory and non-critical applications especially where very large data sets are involved.
 
